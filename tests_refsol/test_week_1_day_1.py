@@ -90,6 +90,7 @@ def test_task_1_simple_attention_scale_mask(
                 shape=(*BATCH_SIZE, DIM_L, DIM_D), dtype=precision
             )
             mask = mx.random.uniform(shape=(*BATCH_SIZE, DIM_L, DIM_L), dtype=precision)
+            # import pdb; pdb.set_trace()
             scale = 0.5
             reference_output = mx.fast.scaled_dot_product_attention(
                 q=query.reshape(1, -1, DIM_L, DIM_D),
@@ -173,3 +174,6 @@ def test_task_2_simple_multi_head_attention(stream: mx.Stream, precision: mx.Dty
                 mask=mask,
             )
             assert_allclose(user_output, reference_output, precision=precision)
+
+if __name__ == '__main__':
+    test_task_1_simple_attention_scale_mask(mx.cpu, mx.float16, 1)
