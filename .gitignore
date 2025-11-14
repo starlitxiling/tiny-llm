@@ -175,3 +175,6 @@ cython_debug/
 
 *.dylib
 *.metallib
+
+# AI tools
+.claude/
