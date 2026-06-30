@@ -31,7 +31,7 @@ class RoPE:
         # import pdb;pdb.set_trace()
 
         N, L, H, D = x.shape
-        x = x.reshape(N, L, H, D // 2, 2)
+        # x = x.reshape(N, L, H, D // 2, 2)
         
         if offset is not None:
             cos = self.cos_freqs[offset]
@@ -41,6 +41,7 @@ class RoPE:
             sin = self.sin_freqs[:L]
 
         if self.traditional: 
+            x = x.reshape(N, L, H, D // 2, 2)
             a = x[..., 0]
             b = x[..., 1]
         else:
@@ -52,7 +53,11 @@ class RoPE:
         
         new_a = a * cos - b * sin
         new_b = b * cos + a * sin
-        out = mx.stack([new_a, new_b], axis=-1)
+        
+        if self.traditional:
+            out = mx.stack([new_a, new_b], axis=-1)
+        else:
+            out = mx.concat([new_a, new_b], axis=-1)
         out = out.reshape(N, L, H, D)
         
         return out
