@@ -123,8 +123,11 @@ class SimpleMultiHeadAttention:
         # pass
 
 
-def causal_mask(L: int, S: int, dtype: mx.Dtype) -> mx.array:
-    pass
+def causal_mask(L: int, S: int, dtype: mx.Dtype) -> mx.array: # L is query sequence length, S is key sequence length
+    allowed = mx.tril(mx.ones((L, S)), k = S - L)
+    mask = mx.where(allowed, 0, -mx.inf)
+    mask = mask.astype(dtype)
+    return mask
 
 
 def scaled_dot_product_attention_grouped(
@@ -134,7 +137,32 @@ def scaled_dot_product_attention_grouped(
     scale: float | None = None,
     mask: mx.array | str | None = None,
 ) -> mx.array:
-    pass
+    # import pdb;pdb.set_trace()
+    H_q, L_q, D_q = query.shape[-3:]
+    B = query.shape[:-3]
+    expected_shape = query.shape
+    H, S, D = key.shape[-3:]
+    
+    n_repeats = H_q // H
+    
+    query = query.reshape(*B, H, n_repeats, L_q, D_q)
+    # key = mx.expand_dims(key, axis=-2) # 不好处理不同维度的key/value，不够通用
+    # key = mx.broadcast_to(key, (H, n_repeats, S, D)) # 手动boardcast，但是不需要，mx会自动boardcast
+    # value = mx.expand_dims(value, axis=-2)
+    key = key.reshape(*B, H, 1, S, D)
+    value = value.reshape(*B, H, 1, S, D)
+    
+    if mask is None:
+        mask = mask
+    elif mask == 'causal':
+        mask = causal_mask(L_q, S, query.dtype)
+    else:
+        mask = mask.reshape(*B, H, n_repeats, L_q, S)
+    
+    output = scaled_dot_product_attention_simple(query, key, value, scale, mask)
+    
+    output = output.reshape(expected_shape)
+    return output
 
 
 def flash_attention(
