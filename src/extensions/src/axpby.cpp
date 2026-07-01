@@ -148,7 +148,8 @@ void Axpby::eval_gpu(const std::vector<mx::array> &inputs, std::vector<mx::array
     kname << type_to_name(out);
 
     // Make a kernel from this metal library (use lib name overload)
-    auto kernel = d.get_kernel(kname.str(), "tiny_llm_ext");
+    auto library = d.get_library("tiny_llm_ext");
+    auto kernel = d.get_kernel(kname.str(), library);
 
     // Prepare to encode kernel
     auto &compute_encoder = d.get_command_encoder(s.index);
@@ -222,7 +223,7 @@ std::vector<mx::array> Axpby::jvp(const std::vector<mx::array> &primals, const s
     // jvp is just the tangent scaled by alpha
     // Similarly, if argnums = {1}, the jvp is just the tangent
     // scaled by beta
-    if (argnums.size() > 1) {
+    if (argnums.size() == 1) {
         auto scale = argnums[0] == 0 ? alpha_ : beta_;
         auto scale_arr = mx::array(scale, tangents[0].dtype());
         return {mx::multiply(scale_arr, tangents[0], stream())};

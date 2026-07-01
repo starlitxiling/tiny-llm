@@ -1,7 +1,8 @@
 #include <cstdint>
-#include <iostream>
-#include <sstream>
 
+#include "mlx/array.h"
+#include "mlx/device.h"
+#include "mlx/dtype.h"
 #include "mlx/backend/common/utils.h"
 #include "mlx/backend/cpu/encoder.h"
 #include "mlx/utils.h"
@@ -9,7 +10,6 @@
 
 #ifdef _METAL_
 #include "mlx/backend/metal/device.h"
-#include "mlx/backend/metal/utils.h"
 #endif
 
 namespace tiny_llm_ext_ref {
@@ -44,8 +44,9 @@ mx::array quantized_matmul(const mx::array &scales,         // Input array scale
     if (bits != 4) {
         throw std::runtime_error("quantized_matmul: bits must be 4");
     }
-    if (group_size != 64) {
-        throw std::runtime_error("quantized_matmul: group_size must be 64");
+    const int packs_per_item = 32 / bits;
+    if (group_size != 128) {
+        throw std::runtime_error("quantized_matmul: group_size must be 128");
     }
     auto out_shape = a.shape();
     if (out_shape.size() != 2) {
@@ -62,10 +63,13 @@ mx::array quantized_matmul(const mx::array &scales,         // Input array scale
     if (b.shape()[0] != scales.shape()[0]) {
         throw std::runtime_error("quantized_matmul: b must have the same number of rows as scales");
     }
-    if (b.shape()[1] != scales.shape()[1] * group_size / 8) {
-        throw std::runtime_error("quantized_matmul: a must have the same number of columns as scales");
+    if (a.shape()[1] % group_size != 0) {
+        throw std::runtime_error("quantized_matmul: a columns must be divisible by group_size");
     }
-    if (a.shape()[1] != b.shape()[1] * 8) {
+    if (scales.shape()[1] != a.shape()[1] / group_size) {
+        throw std::runtime_error("quantized_matmul: scales must have one column per input group");
+    }
+    if (b.shape()[1] != a.shape()[1] / packs_per_item) {
         throw std::runtime_error("quantized_matmul: a must have the same number of columns as b");
     }
 
@@ -73,12 +77,13 @@ mx::array quantized_matmul(const mx::array &scales,         // Input array scale
         /* const mx::Shape& shape = */ out_shape,
         /* mx::Dtype dtype = */ a.dtype(),
         /* std::shared_ptr<mx::Primitive> primitive = */
-        std::make_shared<QuantizedMatmul>(to_stream(s), group_size, bits),
+        std::make_shared<QuantizedMatmul>(to_stream(s)),
         /* const std::vector<mx::array>& inputs = */ {scales, biases, a, b});
 }
 
+template <typename T>
 void quantized_matmul_impl(const mx::array &scales, const mx::array &biases, const mx::array &a, const mx::array &b,
-                           mx::array &out, int group_size, int bits, mx::Stream stream) {
+                           mx::array &out, mx::Stream stream) {
     out.set_data(mx::allocator::malloc(out.nbytes()));
 
     auto &encoder = mx::cpu::get_command_encoder(stream);
@@ -95,20 +100,19 @@ void quantized_matmul_impl(const mx::array &scales, const mx::array &biases, con
         throw std::runtime_error("quantized_matmul: b must be contiguous");
     }
 
-    // Launch the CPU kernel, TODO: support bfloat16
-    encoder.dispatch([out_ptr = out.data<float16_t>(), out_shape = out.shape(), out_strides = out.strides(),
+    encoder.dispatch([out_ptr = out.data<T>(), out_shape = out.shape(), out_strides = out.strides(),
                       a = mx::array::unsafe_weak_copy(a), b = mx::array::unsafe_weak_copy(b),
                       scales = mx::array::unsafe_weak_copy(scales), biases = mx::array::unsafe_weak_copy(biases)]() {
         int M = a.shape()[0];
         int N = a.shape()[1];
         int K = b.shape()[0];
-        const int group_size = 64;
+        const int group_size = 128;
         const int bits = 4;
         const int group_per_row = N / group_size;
-        const float16_t *a_ptr = a.data<float16_t>();
+        const T *a_ptr = a.data<T>();
         const uint32_t *b_ptr = b.data<uint32_t>();
-        const float16_t *scales_ptr = scales.data<float16_t>();
-        const float16_t *biases_ptr = biases.data<float16_t>();
+        const T *scales_ptr = scales.data<T>();
+        const T *biases_ptr = biases.data<T>();
         uint32_t item_mask = (1 << bits) - 1;
         for (int i = 0; i < M; i++) {
             for (int k = 0; k < K; k++) {
@@ -118,8 +122,8 @@ void quantized_matmul_impl(const mx::array &scales, const mx::array &biases, con
                         mx::elem_to_loc(k * group_per_row + group_idx, scales.shape(), scales.strides());
                     int64_t biases_loc =
                         mx::elem_to_loc(k * group_per_row + group_idx, biases.shape(), biases.strides());
-                    float16_t scale = scales_ptr[scales_loc];
-                    float16_t bias = biases_ptr[biases_loc];
+                    T scale = scales_ptr[scales_loc];
+                    T bias = biases_ptr[biases_loc];
                     int64_t b_loc = mx::elem_to_loc((k * N + group_idx * group_size) / 8, b.shape(), b.strides());
                     int64_t a_loc = mx::elem_to_loc(i * N + group_idx * group_size, a.shape(), a.strides());
                     const int packs_per_item = 32 / bits;
@@ -128,8 +132,8 @@ void quantized_matmul_impl(const mx::array &scales, const mx::array &biases, con
                         uint8_t *b_bytes = reinterpret_cast<uint8_t *>(&b_val);
                         for (int pack_idx = 0; pack_idx < packs_per_item; pack_idx++) {
                             uint8_t item_val = (b_bytes[pack_idx / 2] >> ((pack_idx % 2) * bits)) & item_mask;
-                            float b = static_cast<float>(item_val) * scale + bias;
-                            float a = a_ptr[a_loc];
+                            float b = static_cast<float>(item_val) * static_cast<float>(scale) + static_cast<float>(bias);
+                            float a = static_cast<float>(a_ptr[a_loc]);
                             sum += a * b;
                             a_loc += 1;
                         }
@@ -137,7 +141,7 @@ void quantized_matmul_impl(const mx::array &scales, const mx::array &biases, con
                     }
                 }
                 int64_t out_loc = mx::elem_to_loc(i * K + k, out_shape, out_strides);
-                out_ptr[out_loc] = static_cast<float16_t>(sum);
+                out_ptr[out_loc] = static_cast<T>(sum);
             }
         }
     });
@@ -150,8 +154,13 @@ void QuantizedMatmul::eval_cpu(const std::vector<mx::array> &inputs, std::vector
     auto &b = inputs[3];
     auto &out = outputs[0];
 
-    // TODO: dispatch to f32, f16, bf16
-    quantized_matmul_impl(scales, biases, a, b, out, group_size_, bits_, stream());
+    if (out.dtype() == mx::float16) {
+        return quantized_matmul_impl<mx::float16_t>(scales, biases, a, b, out, stream());
+    } else if (out.dtype() == mx::bfloat16) {
+        return quantized_matmul_impl<mx::bfloat16_t>(scales, biases, a, b, out, stream());
+    } else {
+        throw std::runtime_error("quantized_matmul: output must be float16 or bfloat16");
+    }
 }
 
 void QuantizedMatmul::eval_gpu(const std::vector<mx::array> &inputs, std::vector<mx::array> &outputs) {
@@ -167,14 +176,8 @@ void QuantizedMatmul::eval_gpu(const std::vector<mx::array> &inputs, std::vector
 
     // Make a kernel from this metal library
     auto library = d.get_library("tiny_llm_ext_ref");
-    const char* kernel_name;
-    if (a.dtype() == mx::float16) {
-        kernel_name = "quantized_matmul_w4a16_g64_f16";
-    } else if (a.dtype() == mx::bfloat16) {
-        kernel_name = "quantized_matmul_w4a16_g64_bf16";
-    } else {
-        throw std::runtime_error("quantized_matmul: a must be float16 or bfloat16");
-    }
+    const char* kernel_name = out.dtype() == mx::float16 ? "quantized_matmul_w4a16_g128_f16"
+                                                         : "quantized_matmul_w4a16_g128_bf16";
     auto kernel = d.get_kernel(kernel_name, library);
 
     // Prepare to encode kernel
@@ -200,7 +203,7 @@ void QuantizedMatmul::eval_gpu(const std::vector<mx::array> &inputs, std::vector
     int N = a.shape()[1];
     int K = b.shape()[0];
 
-    if (N % group_size_ != 0) {
+    if (N % 128 != 0) {
         throw std::runtime_error("quantized_matmul: N must be divisible by group_size");
     }
 
@@ -210,7 +213,20 @@ void QuantizedMatmul::eval_gpu(const std::vector<mx::array> &inputs, std::vector
     compute_encoder.set_bytes(K, 7);
 
     size_t tgp_size = kernel->maxTotalThreadsPerThreadgroup();
-    const int x_size = 32;
+    // For decode/small-batch matmuls, avoid reserving 32 lanes for M when
+    // only a few rows are active. Keep the original 32-row tile otherwise.
+    int x_size = 32;
+    if (M <= 1) {
+        x_size = 1;
+    } else if (M <= 2) {
+        x_size = 2;
+    } else if (M <= 4) {
+        x_size = 4;
+    } else if (M <= 8) {
+        x_size = 8;
+    } else if (M <= 16) {
+        x_size = 16;
+    }
     const int y_size = tgp_size / x_size;
     if (tgp_size < x_size * y_size) {
         throw std::runtime_error("quantized_matmul: tgp_size must be larger than x*y");

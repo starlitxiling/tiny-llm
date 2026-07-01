@@ -84,10 +84,16 @@ batched_values[i, :, (S-S_i):S, :] = values[i, :, :, :]
 mask[i, :, 0:L, (S-S_i):S] = causal_mask(L, S_i)
 ```
 
+You can verify your implementation by running:
+
+```bash
+pdm run test --week 2 --day 6 -- -k task_2
+```
+
 ## Task 3: Handle Batches in the Model
 
 ```
-src/tiny_llm/qwen2_week2.py
+src/tiny_llm/qwen3_week2.py
 ```
 
 Ensure your model can handle multiple requests simultaneously. You should also use the masks returned by the batch KV cache.
@@ -114,12 +120,14 @@ src/tiny_llm/batch.py
 
 Modify `try_prefill` so that it performs prefilling in chunks, rather than all at once.
 
+Note that you should materialize KV cache between chunks. Because MLX uses lazy evaluation, and chunked prefill keeps extending the KV cache across multiple model calls. If you never call `mx.eval`, the cache becomes a longer and longer lazy expression, so memory usage keeps growing. Calling `mx.eval` on the key and value tensors after each chunk materializes the current KV cache and truncates the graph.
+
 You can test your implementation by running:
 
 ```bash
 pdm run batch-main
 ```
 
-This will use the `qwen2-0.5b` model with a batch size of 5 to process a fixed set of prompts.
+This will use the `qwen3-0.6b` model with a batch size of 5 to process a fixed set of prompts.
 
 {{#include copyright.md}}

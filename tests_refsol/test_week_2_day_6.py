@@ -111,13 +111,13 @@ def attention_helper(
             assert_allclose(
                 user_output_2,
                 reference_output_2,
-                precision=mx.float16,
+                precision=mx.bfloat16,
                 message="no mask",
             )
             assert_allclose(
                 user_output_1,
                 reference_output_1,
-                precision=mx.float16,
+                precision=mx.bfloat16,
                 message="with mask",
             )
 
@@ -178,13 +178,92 @@ def test_task_1_attention_with_mask_gpu_large():
     attention_helper(mx.gpu, 28, 4, 16, 128, 16, 3, use_flash_attention=False)
 
 
-def helper_test_task_3(model_name: str, seq_len: int, iters: int = 1):
+def test_task_2_batching_kv_cache():
+    cache = BatchingKvCache(max_active_requests=3, max_seq_len=8)
+
+    slot0 = TinyKvFullCache()
+    slot0.update_and_fetch(
+        mx.array([[[[10.0]]]], dtype=mx.float32),
+        mx.array([[[[110.0]]]], dtype=mx.float32),
+    )
+
+    slot2 = TinyKvFullCache()
+    slot2.update_and_fetch(
+        mx.array([[[[20.0], [21.0]]]], dtype=mx.float32),
+        mx.array([[[[120.0], [121.0]]]], dtype=mx.float32),
+    )
+
+    cache.add_request(slot0, 0)
+    cache.add_request(slot2, 2)
+
+    keys = mx.array(
+        [
+            [[[12.0], [13.0]]],
+            [[[0.0], [0.0]]],
+            [[[22.0], [23.0]]],
+        ],
+        dtype=mx.float32,
+    )
+    values = mx.array(
+        [
+            [[[112.0], [113.0]]],
+            [[[0.0], [0.0]]],
+            [[[122.0], [123.0]]],
+        ],
+        dtype=mx.float32,
+    )
+
+    batched_keys, batched_values, seq_len, mask = cache.update_and_fetch(
+        keys, values, mask_length=2
+    )
+
+    expected_keys = mx.array(
+        [
+            [[[0.0], [10.0], [12.0], [13.0]]],
+            [[[0.0], [0.0], [0.0], [0.0]]],
+            [[[20.0], [21.0], [22.0], [23.0]]],
+        ],
+        dtype=mx.float32,
+    )
+    expected_values = mx.array(
+        [
+            [[[0.0], [110.0], [112.0], [113.0]]],
+            [[[0.0], [0.0], [0.0], [0.0]]],
+            [[[120.0], [121.0], [122.0], [123.0]]],
+        ],
+        dtype=mx.float32,
+    )
+    expected_mask = mx.array(
+        [
+            [[[-mx.inf, 0.0, 0.0, -mx.inf], [-mx.inf, 0.0, 0.0, 0.0]]],
+            [
+                [
+                    [-mx.inf, -mx.inf, -mx.inf, -mx.inf],
+                    [-mx.inf, -mx.inf, -mx.inf, -mx.inf],
+                ]
+            ],
+            [[[0.0, 0.0, 0.0, -mx.inf], [0.0, 0.0, 0.0, 0.0]]],
+        ],
+        dtype=mx.float32,
+    ).reshape(3, 1, 2, 4)
+
+    assert seq_len is None
+    assert_allclose(batched_keys, expected_keys, mx.float32)
+    assert_allclose(batched_values, expected_values, mx.float32)
+    assert_allclose(mask, expected_mask, mx.float32)
+
+
+def helper_test_task_3(
+    model_name: str,
+    seq_len: int,
+    iters: int = 1,
+):
     """Tests for continuous batching of decode requests."""
     requests = 4
     max_seq_len = seq_len
 
     mlx_model, tokenizer = load(model_name)
-    model = Qwen2ModelWeek2(mlx_model)
+    model = Qwen3ModelWeek2(mlx_model)
     for _ in range(iters):
         cache = [
             BatchingKvCache(requests, max_seq_len)
@@ -226,29 +305,41 @@ def helper_test_task_3(model_name: str, seq_len: int, iters: int = 1):
                 if 0 <= sidx < seq_len:
                     user_out_r = user_out[request_id, 0, :]
                     ref_out_r = ref_outputs[request_id, sidx, :]
-                    user_out_r = user_out_r - mx.logsumexp(user_out_r, keepdims=True)
+                    user_out_r = user_out_r - mx.logsumexp(
+                        user_out_r, keepdims=True
+                    )
                     ref_out_r = ref_out_r - mx.logsumexp(ref_out_r, keepdims=True)
                     assert_allclose(
-                        user_out_r, ref_out_r, precision=mx.float16, rtol=1e-1
+                        user_out_r,
+                        ref_out_r,
+                        precision=mx.bfloat16,
+                        rtol=0.1,
+                        atol=1.0,
                     )
 
 
 @pytest.mark.skipif(
-    not qwen_2_05b_model_exists(), reason="Qwen2-0.5B-Instruct-MLX model not found"
+    not qwen3_0_6b_model_exists(), reason="Qwen3-0.6B-4bit model not found"
 )
-def test_task_3_qwen_2_05b():
-    helper_test_task_3("Qwen/Qwen2-0.5B-Instruct-MLX", seq_len=3)
+def test_task_3_qwen3_0_6b():
+    helper_test_task_3("Qwen/Qwen3-0.6B-MLX-4bit", seq_len=3)
 
 
 @pytest.mark.skipif(
-    not qwen_2_7b_model_exists(), reason="Qwen2-7B-Instruct-MLX model not found"
+    not qwen3_4b_model_exists(), reason="Qwen3-4B-4bit model not found"
 )
-def test_task_3_qwen_2_7b():
-    helper_test_task_3("Qwen/Qwen2-7B-Instruct-MLX", seq_len=3)
+def test_task_3_qwen3_4b():
+    helper_test_task_3(
+        "Qwen/Qwen3-4B-MLX-4bit",
+        seq_len=3,
+    )
 
 
 @pytest.mark.skipif(
-    not qwen_2_15b_model_exists(), reason="Qwen2-1.5B-Instruct-MLX model not found"
+    not qwen3_1_7b_model_exists(), reason="Qwen3-1.7B-4bit model not found"
 )
-def test_task_3_qwen_2_15b():
-    helper_test_task_3("Qwen/Qwen2-1.5B-Instruct-MLX", seq_len=3)
+def test_task_3_qwen3_1_7b():
+    helper_test_task_3(
+        "Qwen/Qwen3-1.7B-MLX-4bit",
+        seq_len=3,
+    )
