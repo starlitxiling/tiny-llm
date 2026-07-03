@@ -21,6 +21,12 @@ def linear(
     return output
 
 
+def sigmoid(x: mx.array) -> mx.array:
+    return mx.where(
+        x >= 0,
+        1 / (1 + mx.exp(-x)),
+        mx.exp(x) / (1 + mx.exp(x)),
+    )
 
 def silu(x: mx.array) -> mx.array:
-    pass
+    return x * sigmoid(x)
