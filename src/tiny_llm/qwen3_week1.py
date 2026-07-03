@@ -28,7 +28,7 @@ class Qwen3MultiHeadAttention:
         assert num_heads % num_kv_heads == 0
         self.hidden_size = hidden_size
         self.num_heads = num_heads
-        self.head_dim = hidden_size // num_heads
+        self.head_dim = head_dim
         self.num_kv_heads = num_kv_heads
         self.wq = wq
         self.wk = wk
@@ -70,12 +70,12 @@ class Qwen3MultiHeadAttention:
             V.astype(mx.float32),
             self.scale, 
             mask,
-        )
+        ).astype(x.dtype)
         
         output = output.transpose(0, 2, 1, 3)
         output = output.reshape(B, L, self.num_heads * self.head_dim)
         output = linear(output, self.wo)
-        
+                                
         return output
 
 
@@ -88,10 +88,26 @@ class Qwen3MLP:
         w_up: mx.array,
         w_down: mx.array,
     ):
-        pass
+        self.dim = dim
+        self.hidden_dim = hidden_dim
+        self.w_gate = w_gate
+        self.w_up = w_up
+        self.w_down = w_down
 
     def __call__(self, x: mx.array) -> mx.array:
-        pass
+        # import pdb;pdb.set_trace()
+        # L, E = x.shape[-2:]
+        # expected_shape = x.shape
+        # x = x.reshape(L,E)
+        # import pdb;pdb.set_trace()
+        x_gate = x @ self.w_gate.T
+        x_up = x @ self.w_up.T
+        
+        hidden = silu(x_gate) * x_up
+        output = hidden @ self.w_down.T
+        # return output.reshape(expected_shape)
+        return output
+        
 
 
 class Qwen3TransformerBlock:
