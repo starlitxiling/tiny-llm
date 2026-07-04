@@ -29,4 +29,7 @@ def sigmoid(x: mx.array) -> mx.array:
     )
 
 def silu(x: mx.array) -> mx.array:
-    return x * sigmoid(x)
+    # return x * sigmoid(x)
+    sigmod = 1 / (1 + mx.exp(-mx.abs(x)))
+    sigmod = mx.where(x < 0, 1 - sigmod, sigmod)
+    return x * sigmod
