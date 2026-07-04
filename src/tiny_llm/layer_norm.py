@@ -10,9 +10,14 @@ class RMSNorm:
     def __call__(self, x: mx.array) -> mx.array:
         origin_type = x.dtype
         x = x.astype(mx.float32)
-        rms = mx.sqrt(mx.mean(mx.square(x), axis=-1, keepdims=True) + self.eps).astype(origin_type)
-        y = x / rms
+        # rms = mx.sqrt(mx.mean(mx.square(x), axis=-1, keepdims=True) + self.eps).astype(origin_type)
+        # y = x / rms
+        x = x * mx.rsqrt(mx.mean(mx.square(x), axis=-1, keepdims=True) + self.eps)
         
-        y = y * self.weight
+        x = x.astype(origin_type)
         
-        return y
+        return x * self.weight.astype(origin_type)
+        
+        # y = y * self.weight
+        
+        # return y

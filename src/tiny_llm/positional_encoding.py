@@ -60,6 +60,6 @@ class RoPE:
             out = mx.concat([new_a, new_b], axis=-1)
         out = out.reshape(N, L, H, D)
         
-        return out
+        return out.astype(x.dtype)
         
         # pass
