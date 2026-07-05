@@ -19,7 +19,7 @@ def simple_generate(
         else:
             next_token = sampler(logits)
         return next_token
-    import pdb;pdb.set_trace()
+    # import pdb;pdb.set_trace()
     tokens = tokenizer.encode(prompt)
     tokens = mx.array(tokens)
     tokens = mx.expand_dims(tokens, axis=0)
