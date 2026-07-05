@@ -29,7 +29,7 @@ def simple_generate(
     while True:
         next_token = _step(model, tokens)
         mx.eval(next_token)          # tagged
-        if next_token.item() == tokenizer.eos_token_ids:
+        if next_token.item() == tokenizer.eos_token_id:
             break
         next_token = mx.expand_dims(next_token, axis=1)
         tokens = mx.concat([tokens, next_token], axis=1)
