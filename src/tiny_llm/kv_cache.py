@@ -27,6 +27,20 @@ class TinyKvCache(ABC):
             On Week 2 Day 1, the mask is passed through unchanged. Week 3 Day 1
             uses the sequence length and mask to construct a dense batch.
         """
+        L_new = key.shape[2]
+        
+        if self.key_values is None:
+            self.key_values = (key, value)
+        else:
+            cached_key, cached_value = self.key_values
+            self.key_values = (
+                mx.concat(cached_key, key, axis=2), 
+                mx.concat(cached_value, value, axis=2)    
+            )
+        self.offset += L_new
+        key, value = self.key_values
+        
+        return key, value, self.offset, mask
 
     def release(self):
         pass
@@ -90,7 +104,20 @@ class TinyKvFullCache(TinyKvCache):
         mask_length: int | None = None,
         mask: mx.array | str | None = None,
     ) -> tuple[mx.array, mx.array, int, Optional[mx.array]]:
-        pass
+        L_new = key.shape[2]
+
+        if self.key_values is None:
+            self.key_values = (key, value)
+        else:
+            cached_key, cached_value = self.key_values
+            self.key_values = (
+                mx.concat([cached_key, key], axis=2),
+                mx.concat([cached_value, value], axis=2),
+            )
+
+        self.offset += L_new
+        key, value = self.key_values
+        return key, value, self.offset, mask
 
     def materialize(self):
         pass

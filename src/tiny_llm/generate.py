@@ -50,8 +50,39 @@ def simple_generate_with_kv_cache(
     model: Qwen3ModelWeek2, tokenizer: TokenizerWrapper, prompt: str
 ) -> str:
     def _step(model, y, offset, kv_cache):
-        pass
-
+        output_logits = model(y, offset, kv_cache)
+        logits = output_logits[:, -1, :]
+        # if sampler is None:
+        #     next_token = mx.argmax(logits, axis=-1)
+        # else:
+        #     next_token = sampler(logits)
+        next_token = mx.argmax(logits, axis=-1)
+        return next_token
+    # import pdb;pdb.set_trace()
+    kv_cache = model.create_kv_cache()
+    offset = 0
+    tokens = tokenizer.encode(prompt)
+    tokens = mx.array(tokens)
+    tokens = mx.expand_dims(tokens, axis=0)
+    current_input = tokens
+    detokenizer = tokenizer.detokenizer
+    detokenizer.reset()
+    output = ""
+    while True:
+        next_token = _step(model, current_input, offset,kv_cache)
+        mx.eval(next_token)          # tagged
+        if next_token.item() == tokenizer.eos_token_id:
+            break
+        next_token = mx.expand_dims(next_token, axis=1)
+        tokens = mx.concat([tokens, next_token], axis=1)
+        detokenizer.add_token(next_token.item())
+        print(detokenizer.last_segment, end="", flush=True)
+        offset += current_input.shape[1]
+        current_input = next_token
+        
+        
+    
+    return detokenizer.text
 
 def speculative_generate(
     draft_model: Qwen3ModelWeek2,
