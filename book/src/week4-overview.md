@@ -1,165 +1,95 @@
 # 🚧 Week 4: Build a Coding Agent
 
-> 🚧 **Course status:** The daily chapters are drafts and are not included in
-> the rendered book yet.
+> **Course status:** Week 4 is being published one checkpoint at a time. Days 1
+> through 9 are ready to learn and review. Additional capabilities will appear
+> only after their implementation, starter, and reviews are ready.
 
-Weeks 1 through 3 turned tokens into text, made decoding efficient, and
-introduced serving techniques. Week 4 adds the next layer: an agent loop that
-lets the model observe a workspace, choose a tool, see the result, and continue
-until a coding task is complete.
+Weeks 1 through 3 built the inference path: tokenize a conversation, run the
+model, and manage the key/value cache that makes later decoding efficient.
+Week 4 puts that path inside a small coding-agent harness. The model proposes
+one structured action at a time; ordinary Python validates it, executes it
+through an explicit workspace boundary, returns the observation, and decides
+when the run must stop.
 
-The goal is not to reproduce a production coding agent. It is to understand the
-small mechanism underneath one and identify where reliability, efficiency, and
-safety come from. By the end of the week, you will have a local CLI agent powered
-by the inference stack you already built.
+The goal is not broad autonomy. Each day adds one visible mechanism that you
+can inspect and test: bounded control flow, read-only tools, approved effects,
+receipts, checkpoints, context selection, steering, evaluation, prefix reuse,
+and bounded evidence retrieval.
 
-## What You Will Build
+## The Nine-Day Progression
 
-The finished agent can:
-
-- inspect a repository without loading every file into the prompt;
-- read files in bounded chunks and make exact, reviewable edits;
-- run a narrowly scoped test command and use its output as feedback;
-- continue an interactive conversation and resume it after process exit;
-- reuse compatible KV-cache state instead of prefilling every turn from zero;
-- compact an overlong context while retaining task state;
-- checkpoint and undo its own file mutations;
-- accept steering messages and interrupt long-running work; and
-- solve a small repository task graded by held-out tests.
-
-This is a deliberately small target. Features such as multi-agent delegation,
-remote execution, MCP integrations, and long-term user memory remain extensions
-rather than prerequisites.
-
-## The Core Loop
-
-Every chapter builds on the same loop:
-
-1. Render the task, project instructions, recent events, and tool descriptions.
-2. Decode one structured action using the model and KV cache.
-3. Parse and validate the action before it reaches the operating system.
-4. Run one workspace tool and append its observation to the session.
-5. Repeat until the model returns a final answer or reaches a budget.
-
-The model does not edit files directly. It proposes an action; ordinary code
-decides whether that action is valid and performs it. This boundary makes agent
-behavior easy to inspect and test.
-
-```text
-task + session events
-        |
-        v
-  context builder ---> model ---> action validator
-        ^                            |
-        |                            v
-   tool result <--- tool runner <--- validated action
-                         |
-                         v
-                      workspace
-```
-
-## One Targeted Inference Extension
-
-The starting model boundary is deliberately stateless:
-
-```python
-Generate = Callable[[list[Message]], str]
-```
-
-For every action, `generate_response()` renders the complete conversation,
-creates a fresh cache for each model layer, prefills the entire prompt, decodes
-one response, and releases the caches. That is a useful correctness baseline,
-but an interactive agent repeatedly sends a long prompt whose prefix barely
-changes.
-
-Day 4 replaces the function with a callable `GenerationSession` that keeps the
-same agent-facing API while owning token IDs and layer caches. It compares the
-new rendered prompt with the cached token sequence, rewinds a divergent suffix,
-and prefills only the new tokens. Days 5 and 6 reuse this operation after
-compaction, steering, and session branching.
-
-The append-only event log remains the source of truth. A process restart may
-always rebuild KV state from events, so persisting K/V to disk is an optional
-optimization rather than a correctness requirement.
-
-The course Qwen3-4B context budget is 32,768 total tokens. Day 5 starts
-compaction at 24,576 input tokens and keeps the remaining 8,192 tokens for the
-next response and tool output. This limit follows the model's training range,
-not the amount of unified memory available; the full derivation and long-context
-measurements are in the
-[performance appendix](./appendix-performance.md#long-context-budget-for-week-4).
-
-## A Small Tool Surface
-
-The target agent uses four tools inspired by small coding-agent harnesses:
-
-```text
-read(path, offset?, limit?)
-edit(path, old_text, new_text)
-write(path, content)
-bash(command, timeout?)
-```
-
-`read` and `edit` are preferable to shell equivalents because they can enforce
-consistent bounds and return structured errors. `bash` supplies repository
-search, file discovery, and test execution without requiring a separate tool for
-every command-line program.
-
-A shell working directory is not a security sandbox. During this course, run the
-agent only in a disposable exercise workspace. A production agent would need a
-container, virtual machine, or similarly strong isolation boundary.
-
-The initial demo calls the model through the stateless baseline. The week keeps
-the agent loop, tools, and safety work as its main arc, then uses interactive
-sessions as a focused opportunity to improve the inference framework without
-changing the model kernels.
-
-## Seven-Day Plan
-
-| Day | Topic | Working milestone |
+| Day | Question | Visible mechanism |
 | --- | --- | --- |
-| 1 | Agent loop | The model alternates between actions and observations. |
-| 2 | Tools | The agent can read, edit, write, and run a bounded command. |
-| 3 | Safety and validation | Mutations are confined, reviewable, and followed by validation. |
-| 4 | Interactive sessions | Follow-up turns reuse compatible KV state, and durable work survives process exit. |
-| 5 | Compaction | Sessions compact before 24,576 input tokens and reconcile the cache to the new prompt. |
-| 6 | Control and recovery | The user can steer, interrupt, checkpoint, rewind, and undo. |
-| 7 | Evaluation | The agent fixes a small bug and passes held-out tests. |
+| [1](week4-01-agent-loop.md) | How does model text become one safe next step? | A validated JSON action protocol and bounded loop. |
+| [2](week4-02-tools.md) | How can the agent inspect a project? | A contained read-only workspace with listing and file reads. |
+| [3](week4-03-safe-editing.md) | How can it change and validate code deliberately? | Operator approval, exact edits and commands, and effect receipts. |
+| [4](week4-04-sessions.md) | Where can a run pause and resume? | One complete-observation checkpoint with model cache metadata. |
+| [5](week4-05-compaction.md) | How can older completed work use less context? | Receipt-backed deterministic compaction of completed interactions. |
+| [6](week4-06-steering.md) | How can an operator inspect and redirect a paused run? | A public status view and one visible steering message. |
+| [7](week4-07-evaluation.md) | How do we judge a run without grading hidden reasoning? | A deterministic report over declared observable outcomes. |
+| [8](week4-08-fork-steer-select.md) | How can two continuations reuse one inference prefix? | Dense tokenizer/KV-prefix reuse, isolated effects, and explicit selection. |
+| [9](week4-09-bound-tool-evidence.md) | How can a large tool result remain available without filling the prompt? | Content-addressed external bytes, bounded previews, and explicit range retrieval. |
 
-## Run the Starting Demo
+The sequence is cumulative. Later starters keep the earlier public surface, and
+later tests rely on the boundaries established before them. Work through the
+days in order even when one later mechanism is your main interest.
 
-The repository contains a minimal demonstration that uses the reference model
-implementation:
+## Prerequisites and Environment
 
-```bash
-pdm run agent "inspect this project and summarize its files"
-```
+Complete the repository setup and Weeks 1 through 3 first. Day 8 directly uses
+the course tokenizer, model, and dense KV cache; the earlier Week 4 days also
+assume you recognize the model-generation boundary those weeks established.
 
-Pass `--solution tiny_llm` to use your implementation, or `--solution mlx` to
-use MLX-LM's optimized executor. The starting program is intentionally smaller
-than the final agent: each day replaces one shortcut with an explicit component
-that can be inspected and tested.
+The supported environment is macOS on Apple Silicon with the project
+dependencies installed. The deterministic Week 4 learner tests use scripted
+models and temporary workspaces, so they do not need model downloads. The
+chapters that include real-model walkthroughs label them as manual and
+nondeterministic; uncached runs additionally need network access, disk space,
+and enough Apple unified memory for the selected MLX weights.
 
-Day 4 adds `--interactive` so a completed turn can receive a follow-up without
-starting a new conversation. Run the same scripted interaction through the cold
-and stateful adapters to verify identical output before comparing prefill work.
+Use only disposable workspaces with no secrets. Read observations become model
+input, and later days can enable file changes and an exact allowlisted command.
 
-The default Qwen3 4B model follows the structured action protocol more reliably.
-Use `--model qwen3-0.6b` on memory-constrained machines and expect to spend more
-time on malformed-action recovery.
+## How to Use This Week
 
-## Milestones
+For each day:
 
-- **Minimal:** the model can inspect a workspace and produce one valid action.
-- **Useful:** the agent can make a precise change and run its test.
-- **Recoverable:** the session can resume, compact, and undo its own changes.
-- **Controllable:** budgets bind and the user can steer or interrupt work.
-- **Efficient:** compatible turns reuse their unchanged prompt prefix.
-- **Measurable:** a repeatable task suite distinguishes progress from anecdotes.
+1. Read its teaching boundary and public starter surface.
+2. Run the day-specific learner command to see the expected failures.
+3. Implement only that day's numbered tasks in `src/tiny_llm/agent/`.
+4. Rerun the same cumulative checkpoint until it is green.
+5. Inspect the recorded events, files, receipts, reports, or cache facts named
+   by the chapter instead of trusting a final model sentence alone.
 
-## Further Reading
+The day chapters contain the exact commands and checkpoints. Course maintainers
+can use the corresponding reference command without copying a learner test.
+Optional real-model walkthroughs come after the deterministic checkpoint; they
+are exploration, not a replacement for reproducible course-code evidence.
 
-- [Pi coding agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent)
-- [Benchmarking Coding Agents on Databricks' Multi-Million Line Codebase](https://www.databricks.com/blog/benchmarking-coding-agents-databricks-multi-million-line-codebase)
+## The Cumulative Learning Arc
+
+Days 1 through 3 establish the ordinary agent cycle: propose, validate,
+observe, approve effects, and record evidence. Days 4 through 6 show how the
+harness can pause, reduce older context, and add an operator instruction while
+preserving completed work. Day 7 evaluates observable outcomes. Day 8 reconnects
+that control path to the tokenizer and KV cache from Weeks 1 through 3. Day 9
+keeps oversized results verifiable while exposing only a bounded view to the
+model.
+
+By the end, you can explain both sides of the boundary: what the model sees and
+proposes, and what the harness validates, executes, retains, or refuses.
+
+## Week Boundary
+
+This is a teaching agent for a trusted operator and disposable local projects.
+It is not a sandbox, hostile-filesystem defense, process jail, durable
+transaction system, distributed scheduler, session tree, hidden grader,
+semantic-perfect memory, network artifact service, or production serving
+framework. Completed effects are never presented as rewound, and a model's
+final prose is never treated as proof by itself.
+
+Each day states its narrower limits where they matter. Keep later or
+production-scale APIs out of the starter unless a chapter explicitly teaches
+them.
 
 {{#include copyright.md}}

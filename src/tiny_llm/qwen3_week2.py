@@ -15,13 +15,16 @@ from .week2_kernels import (
 WEEK2_CHECKPOINTS = (
     "kv-cache",
     "quantized-matvec",
-    "decode-attention",
     "rmsnorm",
     "rope",
     "swiglu",
+    "decode-attention",
     "simd-matmul",
     "split-k",
 )
+
+DECODE_ATTENTION_MAX_CONTEXT = 256
+DECODE_ATTENTION_MAX_QUERY = 2
 
 
 class Qwen3MultiHeadAttention:
