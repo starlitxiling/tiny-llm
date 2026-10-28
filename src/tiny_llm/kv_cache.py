@@ -115,7 +115,11 @@ class TinyKvFullCache(TinyKvCache):
 
     def _logical_key_values(self) -> tuple[mx.array, mx.array]:
         """Return only initialized tokens, never the unused physical tail."""
-        pass
+        key, value = self.key_values
+        return (
+            key[:,:,:self.offset,:],
+            value[:,:,:self.offset,:],
+        )
 
     def update_and_fetch(
         self,
@@ -124,27 +128,86 @@ class TinyKvFullCache(TinyKvCache):
         mask_length: int | None = None,
         mask: mx.array | str | None = None,
     ) -> tuple[mx.array, mx.array, int, Optional[mx.array]]:
-        L_new = key.shape[2]
+        if key.shape != value.shape:
+            raise ValueError("Key and Value shape must match")
+        
+        B, H, L_new, D = key.shape
 
-        if self.key_values is None:
-            self.key_values = (key, value)
+        if self.uses_capacity:
+            end = self.offset + L_new
+
+            if end > self.capacity:
+                raise ValueError(
+                    f"KV cache capacity {self.capacity} exceeded "
+                    f"by append ending at {end}"
+                )
+            expected_shape = (B, H, self.capacity, D)
+            
+            if self.key_values is None:
+                keys = mx.zeros(expected_shape, dtype=key.dtype)
+                values = mx.zeros(expected_shape, dtype=value.dtype)
+            else:
+                keys, values = self.key_values
+                if keys.shape != expected_shape or values.shape != expected_shape:
+                    raise ValueError("Cache shape does not match the incoming tensors")
+                if keys.dtype != key.dtype or values.dtype != value.dtype:
+                    raise ValueError("Cache dtype does not match the incoming tensors")
+            
+            if L_new > 0:
+                start = mx.array([self.offset], dtype=mx.int32)
+                keys = mx.slice_update(
+                    keys, key, start_indices=start, axes=(2,)
+                )
+                values = mx.slice_update(
+                    values, value, start_indices=start, axes=(2,)
+                )
+            
+            self.key_values = (keys, values)
+            self.offset = end
+            self.slice_write_bytes += key.nbytes + value.nbytes
+            
+            logical_keys, logical_values = self._logical_key_values()
+            return logical_keys, logical_values, self.offset, mask
+            
+            
         else:
-            cached_key, cached_value = self.key_values
-            self.key_values = (
-                mx.concat([cached_key, key], axis=2),
-                mx.concat([cached_value, value], axis=2),
-            )
+            if self.key_values is None:
+                self.key_values = (key, value)
+            else:
+                cached_key, cached_value = self.key_values
+                
+                self.key_values = (
+                    mx.concat([cached_key, key], axis=2),
+                    mx.concat([cached_value, value], axis=2),
+                )
+                
+            self.offset += L_new
+            key, value = self.key_values
+            return key, value, self.offset, mask
+        
 
-        self.offset += L_new
-        key, value = self.key_values
-        return key, value, self.offset, mask
-
+        
     def materialize(self):
-        pass
+        if self.key_values is not None:
+            mx.eval(*self.key_values)
 
     def reset(self):
         """Reset logical length while retaining bounded physical storage."""
-        pass
+        self.offset = 0
+        if not self.uses_capacity:
+            self.key_values = None
 
     def rewind(self, n: int):
-        pass
+        if (
+            not isinstance(n, int)
+            or isinstance(n, bool)
+            or not 0 <= n <= self.offset
+        ):
+            raise ValueError(
+                "Rewind length must be between zero and the cache length"
+            )
+
+        self.offset -= n
+        
+        if not self.uses_capacity and self.key_values is not None:
+            self.key_values = self._logical_key_values()
