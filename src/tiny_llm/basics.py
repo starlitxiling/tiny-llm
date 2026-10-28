@@ -1,9 +1,8 @@
 import mlx.core as mx
-import math
 
 
 def softmax(x: mx.array, axis: int) -> mx.array:
-    # TODO: manual implementation
+    # Supplied for Day 1; a manual implementation is an optional bonus exercise.
     return mx.softmax(x, axis=axis)
 
 
@@ -29,7 +28,5 @@ def sigmoid(x: mx.array) -> mx.array:
     )
 
 def silu(x: mx.array) -> mx.array:
-    # return x * sigmoid(x)
-    sigmod = 1 / (1 + mx.exp(-mx.abs(x)))
-    sigmod = mx.where(x < 0, 1 - sigmod, sigmod)
-    return x * sigmod
+    x_f32 = x.astype(mx.float32)
+    return (x_f32 * sigmoid(x_f32)).astype(x.dtype)

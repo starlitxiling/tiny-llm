@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 import mlx.core as mx
@@ -10,25 +12,79 @@ from .layer_norm import RMSNorm
 from .positional_encoding import RoPE
 from .quantize import QuantizedWeights, dequantize_linear, quantized_linear
 from .week2_kernels import (
+    DENSE_PREFILL_MIN_QUERY,
     FastRMSNorm,
     FastRoPE,
-    decode_attention_custom,
+    dense_prefill_attention_mma,
     swiglu,
 )
 
-WEEK2_CHECKPOINTS = (
-    "kv-cache",
-    "quantized-matvec",
-    "rmsnorm",
-    "rope",
-    "swiglu",
-    "decode-attention",
-    "simd-matmul",
-    "split-k",
-)
 
-DECODE_ATTENTION_MAX_CONTEXT = 256
-DECODE_ATTENTION_MAX_QUERY = 2
+@dataclass(frozen=True)
+class Week2CheckpointFeatures:
+    bounded_kv_capacity: bool = False
+    quantized_weights: bool = False
+    fast_rms_norm: bool = False
+    fast_rope: bool = False
+    fast_swiglu: bool = False
+    simdgroup_matmul: bool = False
+    tiled_prefill_attention: bool = False
+
+
+WEEK2_CHECKPOINT_FEATURES = MappingProxyType(
+    {
+        "kv-cache": Week2CheckpointFeatures(),
+        "capacity-cache": Week2CheckpointFeatures(bounded_kv_capacity=True),
+        "quantized-matvec": Week2CheckpointFeatures(
+            bounded_kv_capacity=True, quantized_weights=True
+        ),
+        "simd-matmul": Week2CheckpointFeatures(
+            bounded_kv_capacity=True,
+            quantized_weights=True,
+            simdgroup_matmul=True,
+        ),
+        "rmsnorm": Week2CheckpointFeatures(
+            bounded_kv_capacity=True,
+            quantized_weights=True,
+            simdgroup_matmul=True,
+            fast_rms_norm=True,
+        ),
+        "rope": Week2CheckpointFeatures(
+            bounded_kv_capacity=True,
+            quantized_weights=True,
+            simdgroup_matmul=True,
+            fast_rms_norm=True,
+            fast_rope=True,
+        ),
+        "swiglu": Week2CheckpointFeatures(
+            bounded_kv_capacity=True,
+            quantized_weights=True,
+            simdgroup_matmul=True,
+            fast_rms_norm=True,
+            fast_rope=True,
+            fast_swiglu=True,
+        ),
+        "tiled-prefill": Week2CheckpointFeatures(
+            bounded_kv_capacity=True,
+            quantized_weights=True,
+            simdgroup_matmul=True,
+            fast_rms_norm=True,
+            fast_rope=True,
+            fast_swiglu=True,
+            tiled_prefill_attention=True,
+        ),
+        "selected": Week2CheckpointFeatures(
+            bounded_kv_capacity=True,
+            quantized_weights=True,
+            simdgroup_matmul=True,
+            fast_rms_norm=True,
+            fast_rope=True,
+            fast_swiglu=True,
+            tiled_prefill_attention=True,
+        ),
+    }
+)
+WEEK2_CHECKPOINTS = tuple(WEEK2_CHECKPOINT_FEATURES)
 
 
 def _linear(x: mx.array, weight: mx.array | QuantizedWeights) -> mx.array:
@@ -68,7 +124,7 @@ class Qwen3MultiHeadAttention:
         rms_norm_eps: float = 1e-5,
         use_fast_rms_norm: bool = True,
         use_fast_rope: bool = True,
-        use_decode_attention: bool = True,
+        use_tiled_prefill_attention: bool = False,
     ):
         self.hidden_size = hidden_size
         self.num_heads = num_heads
@@ -86,7 +142,12 @@ class Qwen3MultiHeadAttention:
         self.wv = wv
         self.wo = wo
         self.use_fast_rope = use_fast_rope
-        self.use_decode_attention = use_decode_attention
+        self.use_tiled_prefill_attention = use_tiled_prefill_attention
+        self.attention_dispatch_counts = {
+            "tiled_prefill": 0,
+            "tiled_prefill_fallback": 0,
+            "readable": 0,
+        }
         rope_cls = FastRoPE if use_fast_rope else RoPE
         norm_cls = FastRMSNorm if use_fast_rms_norm else RMSNorm
         self.rope = rope_cls(self.head_dim, max_seq_len, theta)
@@ -121,13 +182,17 @@ class Qwen3MultiHeadAttention:
         projection_k, projection_v, _, mask = cache.update_and_fetch(
             projection_k, projection_v, mask_length=L, mask=mask
         )
-        if (
-            self.use_decode_attention
-            and L <= DECODE_ATTENTION_MAX_QUERY
-            and projection_k.shape[-2] <= DECODE_ATTENTION_MAX_CONTEXT
-            and not isinstance(mask, mx.array)
-        ):
-            x = decode_attention_custom(
+        can_tiled_prefill = (
+            L >= DENSE_PREFILL_MIN_QUERY
+            and projection_q.dtype == mx.bfloat16
+            and self.head_dim == 128
+        )
+        if self.use_tiled_prefill_attention and not can_tiled_prefill:
+            self.attention_dispatch_counts["tiled_prefill_fallback"] += 1
+
+        if self.use_tiled_prefill_attention and can_tiled_prefill:
+            self.attention_dispatch_counts["tiled_prefill"] += 1
+            x = dense_prefill_attention_mma(
                 projection_q,
                 projection_k,
                 projection_v,
@@ -135,6 +200,7 @@ class Qwen3MultiHeadAttention:
                 mask=mask,
             )
         else:
+            self.attention_dispatch_counts["readable"] += 1
             x = scaled_dot_product_attention_grouped(
                 projection_q.astype(mx.float32),
                 projection_k.astype(mx.float32),
@@ -195,7 +261,7 @@ class Qwen3TransformerBlock:
         use_fast_rms_norm: bool = True,
         use_fast_rope: bool = True,
         use_fast_swiglu: bool = True,
-        use_decode_attention: bool = True,
+        use_tiled_prefill_attention: bool = False,
     ):
         self.num_attention_heads = num_attention_heads
         self.hidden_size = hidden_size
@@ -230,7 +296,7 @@ class Qwen3TransformerBlock:
             rms_norm_eps=rms_norm_eps,
             use_fast_rms_norm=use_fast_rms_norm,
             use_fast_rope=use_fast_rope,
-            use_decode_attention=use_decode_attention,
+            use_tiled_prefill_attention=use_tiled_prefill_attention,
         )
 
     def __call__(
@@ -248,28 +314,52 @@ class Qwen3TransformerBlock:
 
 
 class Qwen3ModelWeek2:
-    def __init__(self, mlx_model: Any, checkpoint: str = "split-k"):
+    def __init__(
+        self,
+        mlx_model: Any,
+        checkpoint: str = "selected",
+        use_mlx_quantized_linear: bool = False,
+        use_bounded_kv_capacity: bool | None = None,
+        use_register_cached_rms_norm: bool | None = None,
+        use_tiled_prefill_attention: bool | None = None,
+    ):
         if checkpoint not in WEEK2_CHECKPOINTS:
             raise ValueError(
                 f"unknown Week 2 checkpoint {checkpoint!r}; "
                 f"choose one of {WEEK2_CHECKPOINTS}"
             )
-        checkpoint_index = WEEK2_CHECKPOINTS.index(checkpoint)
+        for name, value in (
+            ("use_bounded_kv_capacity", use_bounded_kv_capacity),
+            ("use_register_cached_rms_norm", use_register_cached_rms_norm),
+            ("use_tiled_prefill_attention", use_tiled_prefill_attention),
+        ):
+            if value is not None and not isinstance(value, bool):
+                raise ValueError(f"{name} must be a bool or None")
         self.checkpoint = checkpoint
-        use_quantized_weights = checkpoint_index >= WEEK2_CHECKPOINTS.index(
-            "quantized-matvec"
-        )
-        use_fast_rms_norm = checkpoint_index >= WEEK2_CHECKPOINTS.index("rmsnorm")
-        use_fast_rope = checkpoint_index >= WEEK2_CHECKPOINTS.index("rope")
-        use_fast_swiglu = checkpoint_index >= WEEK2_CHECKPOINTS.index("swiglu")
-        use_decode_attention = checkpoint_index >= WEEK2_CHECKPOINTS.index(
-            "decode-attention"
-        )
-        use_simdgroup_matmul = checkpoint_index >= WEEK2_CHECKPOINTS.index(
-            "simd-matmul"
-        )
-        use_split_k_matmul = checkpoint_index >= WEEK2_CHECKPOINTS.index("split-k")
+        features = WEEK2_CHECKPOINT_FEATURES[checkpoint]
+        if use_bounded_kv_capacity is None:
+            use_bounded_kv_capacity = features.bounded_kv_capacity
+        if use_register_cached_rms_norm is None:
+            use_register_cached_rms_norm = features.fast_rms_norm
+        if use_tiled_prefill_attention is None:
+            use_tiled_prefill_attention = features.tiled_prefill_attention
+        use_quantized_weights = features.quantized_weights
+        use_fast_rms_norm = use_register_cached_rms_norm
+        use_fast_rope = features.fast_rope
+        use_fast_swiglu = features.fast_swiglu
+        use_simdgroup_matmul = features.simdgroup_matmul
+        use_split_k_matmul = False
         self.num_hidden_layers = mlx_model.args.num_hidden_layers
+        self.use_bounded_kv_capacity = use_bounded_kv_capacity
+        self.use_register_cached_rms_norm = use_register_cached_rms_norm
+        self.use_tiled_prefill_attention = use_tiled_prefill_attention
+        self.mechanism_controls = MappingProxyType(
+            {
+                "capacity_cache": use_bounded_kv_capacity,
+                "register_cached_rmsnorm": use_register_cached_rms_norm,
+                "tiled_prefill": use_tiled_prefill_attention,
+            }
+        )
         self.use_fast_rope = use_fast_rope
         self.hidden_size = mlx_model.args.hidden_size
         self.vocab_size = mlx_model.args.vocab_size
@@ -282,6 +372,7 @@ class Qwen3ModelWeek2:
                     layer,
                     use_simdgroup_matmul=use_simdgroup_matmul,
                     use_split_k_matmul=use_split_k_matmul,
+                    use_mlx_quantized_linear=use_mlx_quantized_linear,
                 )
             return dequantize_linear(layer).astype(mx.bfloat16)
 
@@ -334,7 +425,7 @@ class Qwen3ModelWeek2:
                 use_fast_rms_norm=use_fast_rms_norm,
                 use_fast_rope=use_fast_rope,
                 use_fast_swiglu=use_fast_swiglu,
-                use_decode_attention=use_decode_attention,
+                use_tiled_prefill_attention=use_tiled_prefill_attention,
             )
             self.layers_inner.append(layer)
         norm_cls = FastRMSNorm if use_fast_rms_norm else RMSNorm
@@ -349,10 +440,12 @@ class Qwen3ModelWeek2:
             self.w_lm_head = None
         self.mlx_model = mlx_model
 
-    def create_kv_cache(self) -> list[TinyKvCache]:
+    def create_kv_cache(self, capacity: int | None = None) -> list[TinyKvCache]:
         from .kv_cache import TinyKvFullCache
 
-        return [TinyKvFullCache() for _ in range(self.num_hidden_layers)]
+        return [
+            TinyKvFullCache(capacity=capacity) for _ in range(self.num_hidden_layers)
+        ]
 
     def __call__(
         self,

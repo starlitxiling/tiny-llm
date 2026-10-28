@@ -1,5 +1,4 @@
 import mlx.core as mx
-from .basics import softmax, linear
 import math
 
 
@@ -155,6 +154,8 @@ def scaled_dot_product_attention_grouped(
     if mask is None:
         mask = mask
     elif mask == 'causal':
+        if L_q > S:
+            raise ValueError("Causal attention requires query length at most key length")
         mask = causal_mask(L_q, S, query.dtype)
     else:
         mask = mask.reshape(*B, H, n_repeats, L_q, S)
@@ -175,4 +176,9 @@ def paged_attention(
     scale: float | None = None,
     mask: mx.array | str | None = None,
 ) -> mx.array:
+    """Attend to paged K/V storage without reconstructing a dense cache.
+
+    Week 3 Day 4 owns the correctness-first decode and long-prefill paths for
+    both float32 and BF16. Day 5 optimizes the same public boundary.
+    """
     pass

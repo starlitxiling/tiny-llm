@@ -27,10 +27,11 @@ The course follows a four-week learning path:
 - **Week 1: From Matmul to Text.** Build a Qwen3 model directly from `mlx.core`
   array operations: attention, RoPE, GQA, RMSNorm, the MLP, sampling, and
   the autoregressive loop.
-- **Week 2: A Step Closer to vLLM.** Add a KV cache, establish a
-  synchronized MLX baseline, and let matched benchmarks choose each optimization.
-  The path moves from quantized decode matvec to fused model kernels, tiled
-  prefill, and split-K where the measured Qwen shapes need it.
+- **Week 2: A Faster Single Request.** Day 1 adds `kv-cache` and
+  request-bounded `capacity-cache`; Day 2 keeps W4 projection weights packed
+  through the `quantized-matvec` checkpoint. Day 3 adds SIMD matrix prefill at
+  `simd-matmul`. Day 4 adds cumulative RMSNorm, RoPE, and SwiGLU checkpoints.
+  Day 5 adds `tiled-prefill` and runs the completed `selected` model.
 - **Week 3: Build a Mini vLLM.** Introduce continuous
   batching and chunked admission, then make paged KV the canonical serving
   layout. Decode attention and FlashAttention learn to read pages directly so
@@ -107,20 +108,18 @@ one explicit byte range through the existing loop.
 | 1.5 | Load the Model | ✅ | ✅ | ✅ | ✅ |
 | 1.6 | Generate Responses (aka Decoding) | ✅ | ✅ | ✅ | ✅ |
 | 1.7 | Sampling | ✅ | ✅ | ✅ | ✅ |
-| 2.1 | KV Cache | ✅ | ✅ | ✅ | 🚧 |
-| 2.2 | Benchmarking and Profiling | ✅ | ✅ | ✅ | 🚧 |
-| 2.3 | Quantize the Model | ✅ | ✅ | ✅ | 🚧 |
-| 2.4 | Fused Model Kernels | ✅ | ✅ | ✅ | 🚧 |
-| 2.5 | Fused Decode Attention | ✅ | ✅ | ✅ | 🚧 |
-| 2.6 | SIMD-Matrix Prefill | ✅ | ✅ | ✅ | 🚧 |
-| 2.7 | Split-K Prefill | ✅ | ✅ | ✅ | 🚧 |
+| 2.1 | Cache and Measure (`kv-cache`, `capacity-cache`) | 🚧 | 🚧 | ✅ | 🚧 |
+| 2.2 | Keep W4 Packed (`quantized-matvec`) | 🚧 | 🚧 | ✅ | 🚧 |
+| 2.3 | SIMD Matrix Prefill (`simd-matmul`) | 🚧 | 🚧 | ✅ | 🚧 |
+| 2.4 | Fused Model Primitives (`rmsnorm`, `rope`, `swiglu`) | 🚧 | 🚧 | ✅ | 🚧 |
+| 2.5 | Tiled Dense Prefill Attention (`tiled-prefill`, `selected`) | 🚧 | 🚧 | ✅ | 🚧 |
 | 3.1 | Continuous Batching | ✅ | ✅ | ✅ | 🚧 |
 | 3.2 | Chunked Prefill | ✅ | ✅ | ✅ | 🚧 |
 | 3.3 | Paged KV Cache | ✅ | ✅ | ✅ | 🚧 |
 | 3.4 | Direct Paged Attention | ✅ | ✅ | ✅ | 🚧 |
 | 3.5 | Paged FlashAttention | ✅ | ✅ | ✅ | 🚧 |
-| 3.6 (optional) | Speculative Decoding | ✅ | ✅ | ✅ | 🚧 |
-| 3.x (optional) | MoE (Mixture of Experts) | ✅ | ✅ | ✅ | 🚧 |
+| 3.6 (optional) | MoE (Mixture of Experts) | ✅ | ✅ | ✅ | 🚧 |
+| 3.7 (optional) | Speculative Decoding | ✅ | ✅ | ✅ | 🚧 |
 | 4.1 | Validated Agent Loop | ✅ | ✅ | ✅ | 🚧 |
 | 4.2 | Inspect a Workspace | ✅ | ✅ | ✅ | 🚧 |
 | 4.3 | Edit, Validate, and Record | ✅ | ✅ | ✅ | 🚧 |
@@ -130,6 +129,12 @@ one explicit byte range through the existing loop.
 | 4.7 | Evaluate Observable Outcomes | ✅ | ✅ | ✅ | 🚧 |
 | 4.8 | Fork, Steer, and Select | ✅ | ✅ | ✅ | 🚧 |
 | 4.9 | Bound Tool Evidence | ✅ | ✅ | ✅ | 🚧 |
+
+Earlier Week 2 chapter URLs not reused by active Days 1–5 remain available as
+[historical material](book/src/week2-02-benchmark-profile.md). The former Day 4
+address now serves the [active fused-primitives lesson](book/src/week2-04-fused-model-kernels.md).
+Those historical pages describe an earlier test and checkpoint order, separate
+from the current Day 1 → Day 2 → Day 3 → Day 4 → Day 5 route.
 
 Other topics not covered include quantized or compressed KV caches,
 cross-request prefix caching, fine-tuning, and long-context techniques.

@@ -5,6 +5,11 @@ A coding agent needs a small control loop around that function: ask for one
 response, decide whether it is a final answer or an action, record what
 happened, and continue when an action produces an observation.
 
+Start with one prediction: if the model first requests a disabled tool and then
+returns malformed JSON, which requests reach the workspace, which errors enter
+the next model input, and which configured budget can stop the run first? The
+event trace at the end of this chapter lets you check every part of that answer.
+
 The model never edits a file directly. It emits text. Ordinary Python validates
 that text before handing a parsed action to a workspace object. This separation
 makes the loop deterministic to test even when no model weights are loaded.
@@ -22,6 +27,11 @@ session, or production scheduler.
 
 ## Files and Public Surface
 
+The repository is a final Day 9 declaration scaffold. Future agent modules and
+exports are already visible, but their implementation surfaces are not part of
+Day 1. Most later bodies are TODO stubs; Day 9 also contains one explicitly
+supplied constructor check. Implement only the following surfaces:
+
 Implement the TODO bodies in these Day 1 starter files:
 
 | File | Public names | Responsibility |
@@ -30,10 +40,16 @@ Implement the TODO bodies in these Day 1 starter files:
 | `src/tiny_llm/agent/protocol.py` | `AgentError`, `FinalAction`, `ToolAction`, `parse_action`, `build_system_prompt` | Represent and validate one final answer or one enabled tool request. |
 | `src/tiny_llm/agent/loop.py` | `AgentLimits`, `AgentEvent`, `AgentRun`, `run_agent` | Bound a run, propagate observations, and retain an inspectable trace. |
 
-`generate_response()` remains part of the public Day 1 surface even though the
-focused test uses scripted strings. It renders the messages with the course
-tokenizer, decodes at most `max_tokens` with a fresh cache, stops at EOS, and
-releases every cache in a `finally` block.
+`generate_response()` remains part of the public Day 1 surface. It renders the
+messages with the course tokenizer, decodes at most `max_tokens` with a fresh
+cache, stops at EOS, and releases every cache in a `finally` block.
+
+The supplied Day 1 test checks `generate_response()` with the course tokenizer
+and model boundary: exact prompt and thinking offsets, EOS stopping, the token
+limit, a fresh cache for each call, and cache release on normal and exceptional
+paths. The `pdm run agent` CLI still uses its own MLX-LM generation adapter, so
+a successful live CLI run is not evidence for this helper; the cumulative Day
+1 checkpoint is.
 
 Run the cumulative learner checkpoint from the repository root:
 
@@ -41,8 +57,8 @@ Run the cumulative learner checkpoint from the repository root:
 pdm run test --week 4 --day 1
 ```
 
-This command copies the supplied Day 1 test into `tests/` before running it.
-Before you implement the TODOs, the implementation-dependent cases across nine
+The command force-refreshes the supplied Day 1 learner test before running it.
+Before you implement the TODOs, the implementation-dependent cases across ten
 task groups are expected to fail. No model download is required.
 
 Course maintainers can check the supplied implementation without copying the
@@ -174,7 +190,13 @@ and repeated-action limits, every run has an explicit terminal reason.
 When Day 1 is green, inspect the focused test rather than only its final pass:
 confirm the initial system/user pair, one dispatched `read_file`, the exact
 observation in the next model input, the completed final event, and each
-budgeted stop reason.
+budgeted stop reason. Revisit your opening prediction: a disabled or malformed
+request must not reach the workspace, and the exact error must remain visible
+to the following model turn.
+
+This checkpoint proves the scripted protocol and loop, plus the focused
+`generate_response()` model/cache boundary. It does not make the separate
+real-model CLI exercise that helper.
 
 You now have a validated, bounded model → action → observation loop. Continue
 with [Day 2: Inspect a Workspace](week4-02-tools.md) to replace the fake tool

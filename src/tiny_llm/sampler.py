@@ -10,7 +10,9 @@ def make_sampler(temp: float, top_p: float | None, top_k: int | None):
 
         if top_k is not None and top_k > 0:
             # import pdb;pdb.set_trace()
-            k = min(top_k, logprobs.shape[-1])
+            if top_k > logprobs.shape[-1]:
+                raise ValueError("top_k exceeds vocabulary size")
+            k = top_k
             if k < logprobs.shape[-1]:
                 top_indices = mx.argpartition(-logprobs, kth=k - 1, axis=-1)[
                     :, :k
@@ -27,9 +29,9 @@ def make_sampler(temp: float, top_p: float | None, top_k: int | None):
                 axis=-1,
             )
             cum = mx.cumsum(mx.exp(sorted_probs), axis=-1)
-            mask_elements = cum < top_p
-            mask_elements[..., 0] = True
-            logprobs[:, idx] = mx.where(mask_elements, sorted_probs, -mx.inf)
+            mask_elements = cum - mx.exp(sorted_probs) < top_p
+            sorted_filtered = mx.where(mask_elements, sorted_probs, -mx.inf)
+            logprobs = mx.take_along_axis(sorted_filtered, mx.argsort(idx, axis=-1), axis=-1)
 
         logprobs = logprobs / temp
         return mx.random.categorical(logprobs, axis=-1)

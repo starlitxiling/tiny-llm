@@ -67,21 +67,35 @@ default from the measured tradeoff rather than treating one chunk size as
 universal.
 
 ```bash
-pdm run test --week 3 --day 2
-pdm run batch-main
+week3_result_root="$HOME/tiny-llm-week3-results"
+mkdir -p "$week3_result_root"
+week3_result_dir="$(mktemp -d "$week3_result_root/run-XXXXXX")"
 
-pdm run bench-chunked-prefill --offline --model qwen3-0.6b \
+pdm run test --week 3 --day 2
+pdm run batch-main --solution tiny_llm --loader week2
+
+pdm run bench-chunked-prefill --solution tiny_llm --offline --model qwen3-0.6b \
   --prefill-steps 32 128 512 --num-seqs 8 --batch-size 4 \
   --min-input-len 64 --max-input-len 512 \
   --min-output-len 32 --max-output-len 32 \
   --warmup 1 --repeats 4 --cooldown-seconds 1 \
-  --json-output benchmark_results/m4-pro-qwen3-0.6b-week3-chunked-prefill-mlx-0.32.0.json
+  --json-output "$week3_result_dir/chunked-prefill-tiny-llm.json"
 ```
 
-The checked trace uses seed 0 and the same 32-token output budget for every
-request. Each chunk size runs twice in forward order and twice in reverse order
-in fresh processes. The JSON stores every prompt token id, the per-request
-output budget, and their canonical SHA-256 checksum.
+This command measures your `tiny_llm` solution and writes a new JSON file
+outside the tracked historical corpus. For a current reference control, rerun
+the same flags with `--solution ref` and a different filename in the new
+directory; compare those new measurements with your own run. The table below
+is historical task #367 evidence from source
+`18aec8503929d80c986324578068ecac2463c2ac`, before the five-day Week 2
+revamp. Its trace used seed 0 and the same 32-token output budget for every
+request. Each chunk size ran twice in forward order and twice in reverse order
+in fresh processes. Every row used the same canonical Week 3 MLX
+quantized-projection seam and the same course-owned scheduler, dense cache, and
+attention code; only the prefill budget changed. The saved JSON stores every prompt
+token id, the per-request output budget, and their canonical SHA-256 checksum.
+Running today's reference can produce different values; it does not reproduce
+the predecessor table.
 
 A decode-completion gap is the wall-clock interval between two consecutive
 synchronized decode calls while at least one decode request remains active. It
@@ -89,15 +103,20 @@ therefore includes intervening prefill and scheduler work; idle time with no
 decode request is excluded. On the measured M4 Pro, the four-process medians
 were:
 
-| Prefill budget | Output tok/s | Requests/s | Decode step p95 | Decode gap p95 / max |
-|---:|---:|---:|---:|---:|
-| 32 | 105.47 | 3.296 | 17.52 ms | 30.39 / 32.47 ms |
-| 128 | 144.91 | 4.528 | 18.78 ms | 46.52 / 48.80 ms |
-| 512 | 157.00 | 4.906 | 19.57 ms | 76.04 / 122.16 ms |
+| Prefill budget | Output tok/s | Prefill tok/s | Decode tok/s | Requests/s | Decode step p95 | Decode gap p95 / max |
+|---:|---:|---:|---:|---:|---:|---:|
+| 32 | 105.23 | 2,549.62 | 181.77 | 3.288 | 15.82 ms | 30.01 / 52.62 ms |
+| 128 | 153.82 | 4,215.12 | 242.23 | 4.807 | 17.79 ms | 45.36 / 53.76 ms |
+| 512 | 170.46 | 4,769.14 | 262.01 | 5.327 | 17.11 ms | 73.56 / 119.90 ms |
 
-The 512-token row is the full-prompt Day 1 control for this trace. Reducing the
-budget makes the p95 completion gap monotonically smaller, while the 32-token
-budget gives up substantial throughput. The course uses 128 as a measured
-compromise for this workload, not as a universal optimum.
+The 512-token row was the full-prompt Day 1 control for that trace. Relative to
+that row, the 128-token budget gives up 9.8% output throughput while reducing
+the p95 completion gap by 38.3% and the maximum gap by 55.2%. The 32-token
+budget reduces the p95 gap further but gives up substantially more throughput.
+For that predecessor workload, 128 was a measured compromise, not a universal
+optimum for your current run. The ledger at
+`benchmark_results/task367-final-main/task367-final-main-benchmark-ledger.md`
+keeps this predecessor absolute result separate from task #360's causal
+projection-seam ablation.
 
 {{#include copyright.md}}

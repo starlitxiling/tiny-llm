@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -41,59 +42,66 @@ WEEK2_VARIANTS = (
     WEEK1_VARIANT,
     Variant(
         "week2-kv-cache",
-        "2.1 KV cache",
+        "2.1 Reuse the prefix",
         "ref",
         "week2",
         ("--week2-checkpoint", "kv-cache"),
     ),
     Variant(
+        "week2-capacity-cache",
+        "2.1 + Bound KV-cache movement",
+        "ref",
+        "week2",
+        ("--week2-checkpoint", "capacity-cache"),
+    ),
+    Variant(
         "week2-quantized-matvec",
-        "2.3 Quantized matvec",
+        "2.2 Keep W4 packed",
         "ref",
         "week2",
         ("--week2-checkpoint", "quantized-matvec"),
     ),
     Variant(
+        "week2-simd-matmul",
+        "2.3 SIMD matrix prefill",
+        "ref",
+        "week2",
+        ("--week2-checkpoint", "simd-matmul"),
+    ),
+    Variant(
         "week2-rmsnorm",
-        "2.4 Fast RMSNorm",
+        "2.4 Compact RMSNorm",
         "ref",
         "week2",
         ("--week2-checkpoint", "rmsnorm"),
     ),
     Variant(
         "week2-rope",
-        "2.4 + Fast RoPE",
+        "2.4 + Compact RoPE",
         "ref",
         "week2",
         ("--week2-checkpoint", "rope"),
     ),
     Variant(
         "week2-swiglu",
-        "2.4 + Fused SwiGLU",
+        "2.4 + Compact SwiGLU",
         "ref",
         "week2",
         ("--week2-checkpoint", "swiglu"),
     ),
     Variant(
-        "week2-decode-attention",
-        "2.5 Decode attention",
+        "week2-tiled-prefill",
+        "2.5 Tiled dense prefill attention",
         "ref",
         "week2",
-        ("--week2-checkpoint", "decode-attention"),
+        ("--week2-checkpoint", "tiled-prefill"),
     ),
     Variant(
-        "week2-simd-matmul",
-        "2.6 SIMD matrix prefill",
+        "week2-selected",
+        "2.5 + Run the selected inference engine",
         "ref",
         "week2",
-        ("--week2-checkpoint", "simd-matmul"),
-    ),
-    Variant(
-        "week2-split-k",
-        "2.7 Split-K prefill",
-        "ref",
-        "week2",
-        ("--week2-checkpoint", "split-k"),
+        ("--week2-checkpoint", "selected"),
     ),
     MLX_VARIANT,
 )
@@ -116,8 +124,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--solution",
         choices=("ref", "tiny_llm"),
-        default="ref",
-        help="benchmark the reference or student course checkpoints",
+        required=True,
+        help="benchmark the reference or learner course checkpoints explicitly",
     )
     parser.add_argument(
         "--suite",
@@ -351,9 +359,21 @@ def collect_source_metadata(root: Path) -> dict:
         text=True,
     ).stdout
     return {
-        "git_commit": commit,
-        "git_tracked_dirty": bool(tracked_status),
+        "commit": commit,
+        "tree": subprocess.run(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        "tracked_dirty": bool(tracked_status),
     }
+
+
+def canonical_hash(value: object) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 def relative_to(value: float, baseline: float) -> str:
@@ -401,6 +421,10 @@ def print_table(
 
 def main() -> None:
     args = parse_args()
+    if args.json_output is not None and (
+        args.json_output.exists() or args.json_output.is_symlink()
+    ):
+        raise FileExistsError(f"refusing to overwrite {args.json_output}")
     root = Path(__file__).resolve().parents[1]
     host = collect_host_metadata()
     variants = [VARIANTS_BY_KEY[key] for key in args.variant]
@@ -441,9 +465,22 @@ def main() -> None:
     print_table(variants, medians)
 
     if args.json_output:
+        workload = {
+            "model": args.model,
+            "input_tokens": args.input_len,
+            "output_tokens": args.output_len,
+            "seed": args.seed,
+            "prompt_rule": "synthetic-token-ids",
+            "prefill_logits": args.prefill_logits,
+            "warmup": args.warmup,
+            "repeats": args.repeats,
+        }
         payload = {
+            "schema_version": 2,
             "source": collect_source_metadata(root),
             "host": host,
+            "workload": workload,
+            "workload_id": canonical_hash(workload),
             "configuration": {
                 "model": args.model,
                 "solution": args.solution,

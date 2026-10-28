@@ -18,10 +18,14 @@ def validate_week_day(args, required=False):
     return True
 
 
+def test_source_file(args):
+    return f"tests_refsol/test_week_{args.week}_day_{args.day}.py"
+
+
 def copy_test(args, skip_if_exists=False, force=False):
     if not validate_week_day(args, required=True):
         return 1
-    source_file = f"tests_refsol/test_week_{args.week}_day_{args.day}.py"
+    source_file = test_source_file(args)
     target_file = f"tests/test_week_{args.week}_day_{args.day}.py"
     if skip_if_exists and os.path.exists(target_file) and not force:
         # diff the two files and warn if they are different
@@ -42,7 +46,19 @@ def test(args):
     if not validate_week_day(args):
         return 1
     if args.week is not None:
-        copy_test(args, skip_if_exists=True)
+        if args.week == 4:
+            targets = []
+            for day in range(1, args.day + 1):
+                day_args = argparse.Namespace(
+                    week=args.week,
+                    day=day,
+                )
+                status = copy_test(day_args, force=True)
+                if status:
+                    return status
+                targets.append(f"tests/test_week_{args.week}_day_{day}.py")
+            return pytest.main(["-v", *targets] + args.remainders)
+        copy_test(args, force=True)
         return pytest.main(
             ["-v", f"tests/test_week_{args.week}_day_{args.day}.py"] + args.remainders
         )
@@ -53,10 +69,8 @@ def test_refsol(args):
     if not validate_week_day(args):
         return 1
     if args.week is not None:
-        return pytest.main(
-            ["-v", f"tests_refsol/test_week_{args.week}_day_{args.day}.py"]
-            + args.remainders
-        )
+        source_file = test_source_file(args)
+        return pytest.main(["-v", source_file] + args.remainders)
     return pytest.main(["-v", "tests_refsol"] + args.remainders)
 
 

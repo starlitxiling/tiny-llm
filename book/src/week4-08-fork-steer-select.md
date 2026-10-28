@@ -22,18 +22,18 @@ inside their branch.
 
 ## The Starter Surface
 
-Day 8 adds one module and extends the approval result:
+The final scaffold already declares Day 9 evidence APIs. Leave those future
+TODO bodies alone. Day 8 owns one module and extends the approval result:
 
 | File | Public names | Purpose |
 | --- | --- | --- |
 | `src/tiny_llm/agent/workspace.py` | `ApprovalDecision` | Carry an operator's denial reason back as one ordinary model-visible observation. |
 | `src/tiny_llm/agent/branching.py` | `PrefixReuse`, `KvPrefixGenerator`, `BranchOutcome`, `run_branch`, `select_branch` | Reuse a dense KV prefix, run isolated steered continuations, evaluate them, and make one explicit choice. |
-| `src/tiny_llm/agent/__init__.py` | the names above | Export the cumulative Day 8 API. |
+| `src/tiny_llm/agent/__init__.py` | the names above | Complete the Day 8 exports within the final scaffold. |
 
-Copy and run the five learner tasks:
+Run the cumulative learner checkpoint:
 
 ```bash
-pdm run copy-test --week 4 --day 8
 pdm run test --week 4 --day 8
 ```
 
@@ -43,7 +43,15 @@ Use this command for the supplied implementation:
 pdm run test-refsol --week 4 --day 8
 ```
 
-Before you implement the TODOs, all five Day 8 tasks are expected to fail.
+Before you implement the TODOs, all five Day 8 tasks are expected to fail. The
+command force-refreshes and runs the supplied learner tests for Days 1--8
+together.
+
+Before running the focused scenario, predict four values or facts: the shared
+base receipt in both roots, the receipt added only by the validate branch, the
+reused prefix length, and whether `reused_tokens` must equal
+`avoided_prefill_tokens`. The branch files, receipt bytes, cache offsets, and
+evaluation reports are the evidence.
 
 ## Task 1: Return a Reason with a Denial
 
@@ -162,6 +170,12 @@ model = Qwen3ModelWeek3(mlx_model, enable_paged_attention=False)
 prefix_generator = KvPrefixGenerator(model, tokenizer, max_tokens=128)
 ```
 
+This section is an integration outline, not a complete cached-Qwen program.
+You still have to construct `paused`, both copied workspace/receipt roots, the
+evaluation cases, and each scripted or live continuation. The supplied
+capstone composes those mechanisms with a deterministic checkpoint model; it
+does not make this nondeterministic model walkthrough a correctness test.
+
 First create a Day 4 checkpoint named `paused` after a complete tool
 observation. Its messages are the control boundary you want to share, while its
 model field belongs to the generator that created it. Rebind those exact
@@ -187,6 +201,10 @@ the actual proposed actions, approval reason, final file bytes, receipt logs,
 and evaluation reports. The deterministic learner test covers the same public
 boundary with a tiny tokenizer/model and no download.
 
+`reused_tokens` and `avoided_prefill_tokens` show exact logical prefix reuse.
+They are not a wall-clock speedup, throughput measurement, or memory-capacity
+claim.
+
 ## Checkpoint
 
 You can now connect a Day 4 control checkpoint to the actual tokenizer and KV
@@ -202,5 +220,9 @@ machinery.
 Continue with [Day 9: Bound Tool Evidence](week4-09-bound-tool-evidence.md) to
 keep oversized results verifiable without placing their complete bytes in each
 later model prompt.
+
+The Day 9 test starts its own loop rather than consuming the selected Day 8
+outcome. After Day 9, the supplied Week 4 capstone exercises that final handoff
+in one deterministic scenario.
 
 {{#include copyright.md}}
