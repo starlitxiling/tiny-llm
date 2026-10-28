@@ -115,8 +115,8 @@ class Qwen3MultiHeadAttention:
         self.wk = wk
         self.wv = wv
         self.wo = wo
-        self.q_norm = q_norm
-        self.k_norm = k_norm
+        self.q_norm = RMSNorm(head_dim, q_norm, rms_norm_eps)
+        self.k_norm = RMSNorm(head_dim, k_norm, rms_norm_eps)
         self.rms_norm_eps = rms_norm_eps
         
         self.scale = mx.rsqrt(self.head_dim)
@@ -139,11 +139,8 @@ class Qwen3MultiHeadAttention:
         K = linear(x, self.wk).reshape(B, L, self.num_kv_heads, self.head_dim)
         V = linear(x, self.wv).reshape(B, L, self.num_kv_heads, self.head_dim)
         
-        q_norm = RMSNorm(self.head_dim, self.q_norm, self.rms_norm_eps)
-        k_norm = RMSNorm(self.head_dim, self.k_norm, self.rms_norm_eps)
-
-        Q = q_norm(Q)
-        K = k_norm(K)
+        Q = self.q_norm(Q)
+        K = self.k_norm(K)
         
         Q = self.rope(Q, offset=slice(offsets, offsets+L))
         K = self.rope(K, offset=slice(offsets, offsets+L))
@@ -286,6 +283,7 @@ class Qwen3ModelWeek2:
         
         self.vocab_size = mlx_model.args.vocab_size
         self.tie_word_embeddings = mlx_model.args.tie_word_embeddings
+        self.w_lm_head = None
         
         if not self.tie_word_embeddings:
             self.w_lm_head = dequantize_linear(mlx_model.lm_head)
@@ -300,6 +298,7 @@ class Qwen3ModelWeek2:
             self.hidden_size,
             dequantize_linear(mlx_model.model.embed_tokens),
         )
+        self.precision = self.embedding.weight.dtype
         
         self.use_decode_attention = False
         self.use_fast_swiglu = False
@@ -349,10 +348,8 @@ class Qwen3ModelWeek2:
     def create_kv_cache(self, capacity: int | None = None) -> list[TinyKvCache]:
         from .kv_cache import TinyKvFullCache
 
-        if capacity is not None:
-            raise NotImplementedError("Bounded KV cache is not implemented yet")
         return [
-            TinyKvFullCache()
+            TinyKvFullCache(capacity=capacity)
             for _ in range(self.num_hidden_layers)
         ]
 
