@@ -49,9 +49,9 @@ def simple_generate(
         print(detokenizer.last_segment, end="", flush=True)
     
     detokenizer.finalize()
-    print(detokenizer.last_segment, end="", flush=True)
-    
-        
+    print(detokenizer.last_segment, end="\n", flush=True)
+
+
 def simple_generate_with_kv_cache(
     model: Qwen3ModelWeek2,
     tokenizer: TokenizerWrapper,
@@ -100,7 +100,7 @@ def simple_generate_with_kv_cache(
         
     
     detokenizer.finalize()
-    print(detokenizer.last_segment, end="", flush=True)
+    print(detokenizer.last_segment, end="\n", flush=True)
     return detokenizer.text
 
 def speculative_generate(
